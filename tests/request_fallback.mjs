@@ -20,13 +20,14 @@ const Utils = load("utils.js");
 // Fresh module per scenario so the rejected-model cache starts empty.
 function loadFallback() {
     let code = fs.readFileSync(
-        path.join(__dirname, "../package/contents/ui/adapters/temperatureFallback.js"),
+        path.join(__dirname, "../package/contents/ui/adapters/requestFallback.js"),
         "utf8"
     );
     code = code.replace(/^\s*\.(import|pragma)\s+.*$/gm, "");
     const sandbox = {
         console: Object.assign({}, console, { warn: function() {} }),
-        Utils: Utils
+        Utils: Utils,
+        i18n: function(s) { return s; }
     };
     vm.createContext(sandbox);
     vm.runInContext(code, sandbox);
@@ -374,9 +375,158 @@ function ok(cond, msg) {
     ok(retryBody.thinking && retryBody.thinking.type === "enabled", "thinking: retry keeps thinking config");
 }
 
+// 10. Truncated tool call: retry once with a larger output budget.
+{
+    const Fallback = loadFallback();
+    const adapter = makeAdapter();
+    const completions = [];
+    Fallback.send(adapter, baseOpts({
+        maxTokens: 2048,
+        onComplete: function(text, error) { completions.push({ text: text, error: error }); }
+    }));
+
+    ok(adapter.calls[0].opts.maxTokens === 2048, "budget: first attempt uses configured maxTokens");
+    adapter.calls[0].opts.onComplete("", "API error 500: Failed to parse tool call arguments as JSON: missing closing quote");
+    ok(adapter.calls.length === 2, "budget: parse failure triggers a retry");
+    ok(adapter.calls[1].opts.maxTokens === 8192, "budget: retry raises maxTokens to 8192");
+    ok(adapter.calls[1].opts.temperature === 70, "budget: retry keeps temperature");
+
+    adapter.calls[1].opts.onComplete("done", null, null, null);
+    ok(completions.length === 1 && completions[0].text === "done", "budget: caller sees the retry result");
+}
+
+// 11. A second truncation is reported with actionable guidance and the
+//     multi-kilobyte argument dump is trimmed.
+{
+    const Fallback = loadFallback();
+    const adapter = makeAdapter();
+    const completions = [];
+    const dump = "API error 500: Failed to parse tool call arguments as JSON: parse error at line 1, column 3797: " +
+                 "invalid string: missing closing quote; last read: '\"python3 << 'EOF'\\n" + "x".repeat(3000);
+    Fallback.send(adapter, baseOpts({
+        maxTokens: 2048,
+        onComplete: function(text, error) { completions.push({ text: text, error: error }); }
+    }));
+    adapter.calls[0].opts.onComplete("", dump);
+    ok(adapter.calls.length === 2, "guidance: first truncation retried");
+    adapter.calls[1].opts.onComplete("", dump);
+    ok(adapter.calls.length === 2, "guidance: only one budget retry");
+    ok(completions.length === 1, "guidance: caller notified once");
+    const err = completions[0].error || "";
+    ok(err.indexOf("Raise Max Tokens") !== -1, "guidance: tells the user to raise Max Tokens");
+    ok(err.indexOf("x".repeat(3000)) === -1, "guidance: argument dump trimmed");
+    ok(err.indexOf("(tool-call arguments truncated)") !== -1, "guidance: marks the truncation");
+}
+
+// 12. Already at the budget cap (or no maxTokens): no retry, just guidance.
+{
+    const Fallback = loadFallback();
+    const adapter = makeAdapter();
+    const completions = [];
+    Fallback.send(adapter, baseOpts({
+        maxTokens: 16384,
+        onComplete: function(text, error) { completions.push({ text: text, error: error }); }
+    }));
+    adapter.calls[0].opts.onComplete("", "Failed to parse tool call arguments as JSON");
+    ok(adapter.calls.length === 1, "cap: no retry at 16384");
+    ok(completions.length === 1 && (completions[0].error || "").indexOf("Raise Max Tokens") !== -1,
+       "cap: guidance still shown");
+
+    const Fallback2 = loadFallback();
+    const adapter2 = makeAdapter();
+    const opts2 = baseOpts();
+    delete opts2.maxTokens;
+    Fallback2.send(adapter2, opts2);
+    adapter2.calls[0].opts.onComplete("", "Failed to parse tool call arguments as JSON");
+    ok(adapter2.calls.length === 1, "no maxTokens: no budget retry");
+}
+
+// 13. Both rules can apply to one request: temperature first, then truncation.
+{
+    const Fallback = loadFallback();
+    const adapter = makeAdapter();
+    const completions = [];
+    Fallback.send(adapter, baseOpts({
+        maxTokens: 2048,
+        onComplete: function(text, error) { completions.push({ text: text, error: error }); }
+    }));
+    adapter.calls[0].opts.onComplete("", UNSUPPORTED);
+    ok(adapter.calls.length === 2 && adapter.calls[1].opts.temperature === undefined,
+       "combined: temperature retry first");
+    adapter.calls[1].opts.onComplete("", "Failed to parse tool call arguments as JSON");
+    ok(adapter.calls.length === 3, "combined: truncation retry follows");
+    ok(adapter.calls[2].opts.temperature === undefined, "combined: still skipping temperature");
+    ok(adapter.calls[2].opts.maxTokens === 8192, "combined: larger budget applied");
+    ok(adapter.calls[2].opts.skipTemperature === true, "combined: skip flag preserved");
+    adapter.calls[2].opts.onComplete("ok", null, null, null);
+    ok(completions.length === 1 && completions[0].error === null, "combined: success reported once");
+}
+
+// 14. Integration: truncated tool-call 500 from the Responses adapter raises
+//     max_output_tokens on the retried request.
+{
+    const requests = [];
+    class FakeXHR {
+        constructor() { this.headers = {}; }
+        open(method, url) { this.method = method; this.url = url; }
+        setRequestHeader(k, v) { this.headers[k] = v; }
+        send(body) { this.body = body; requests.push(this); }
+        abort() { this.respond(0, ""); }
+        respond(status, body) {
+            this.status = status;
+            this.responseText = body;
+            this.readyState = 4;
+            if (this.onreadystatechange) this.onreadystatechange();
+        }
+    }
+
+    let adapterCode = fs.readFileSync(
+        path.join(__dirname, "../package/contents/ui/adapters/openai_responses.js"),
+        "utf8"
+    );
+    adapterCode = adapterCode.replace(/^\s*\.(import|pragma)\s+.*$/gm, "");
+    const sandbox = {
+        console: Object.assign({}, console, { warn: function() {}, error: function() {} }),
+        XMLHttpRequest: FakeXHR,
+        Utils: Utils,
+        ToolManager: {},
+        i18n: function(s) {
+            const args = Array.prototype.slice.call(arguments, 1);
+            return s.replace(/%(\d)/g, function(m, n) { return String(args[n - 1]); });
+        }
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(adapterCode, sandbox);
+
+    const Fallback = loadFallback();
+    const chunks = [];
+    const completions = [];
+    Fallback.send(sandbox, baseOpts({
+        usesResponsesAPI: true,
+        maxTokens: 2048,
+        messages: [{ role: "user", content: "rewrite the config" }],
+        onChunk: function(delta) { chunks.push(delta); },
+        onComplete: function(text, error) { completions.push({ text: text, error: error }); }
+    }));
+
+    ok(JSON.parse(requests[0].body).max_output_tokens === 2048, "integration: first body uses 2048");
+    requests[0].respond(500, JSON.stringify({
+        error: { message: "Failed to parse tool call arguments as JSON: [json.exception.parse_error.101] " +
+                          "parse error at line 1, column 3797: invalid string: missing closing quote" }
+    }));
+    ok(requests.length === 2, "integration: 500 triggers a retry");
+    ok(JSON.parse(requests[1].body).max_output_tokens === 8192, "integration: retry body uses 8192");
+
+    requests[1].respond(200,
+        'data: {"type":"response.output_text.delta","delta":"OK"}\n\n' +
+        'data: {"type":"response.completed"}\n\n');
+    ok(chunks.join("") === "OK", "integration: retry streams to the caller");
+    ok(completions.length === 1 && completions[0].error === null, "integration: success reported once");
+}
+
 if (failed > 0) {
     console.error(failed + " test(s) failed");
     process.exit(1);
 }
 
-console.log("temperature_fallback.mjs: all tests passed");
+console.log("request_fallback.mjs: all tests passed");

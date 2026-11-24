@@ -515,7 +515,7 @@ function sendStreaming(opts) {
         stream: true
     };
     // Omitted when the caller strips it (providers that reject temperature on
-    // some models — see adapters/temperatureFallback.js).
+    // some models — see adapters/requestFallback.js).
     if (typeof temperature === "number") {
         body.temperature = temperature / 100.0;
     }

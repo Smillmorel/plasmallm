@@ -8,7 +8,7 @@
 // adapters/<id>.js and is selected via Plasmoid.configuration.apiType.
 
 .import "adapters/index.js" as Adapters
-.import "adapters/temperatureFallback.js" as TemperatureFallback
+.import "adapters/requestFallback.js" as RequestFallback
 .import "toolManager.js" as ToolManager
 .import "driverManager.js" as DriverManager
 .import "walletCore.js" as WalletCore
@@ -399,7 +399,7 @@ function buildContentArray(apiType, text, attachments, usesResponsesAPI, extra) 
 }
 
 function sendStreaming(apiType, opts) {
-    return TemperatureFallback.send(Adapters.getAdapter(apiType), opts);
+    return RequestFallback.send(Adapters.getAdapter(apiType), opts);
 }
 
 // Single-shot decisions evaluation (TypeSafe / Jev). Returns an abortable

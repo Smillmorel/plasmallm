@@ -715,7 +715,7 @@ function sendStreaming(opts) {
         maxOutputTokens: maxTokens
     };
     // Omitted when the caller strips it (providers that reject temperature on
-    // some models — see adapters/temperatureFallback.js).
+    // some models — see adapters/requestFallback.js).
     if (typeof temperature === "number") {
         generationConfig.temperature = temperature / 100.0;
     }

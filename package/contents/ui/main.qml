@@ -4310,6 +4310,32 @@ PlasmoidItem {
             }
         }
 
+        // Required parameters must be present before anything runs. Models
+        // occasionally emit a call with an empty argument object (e.g.
+        // run_command with no command); executing it just produces a confusing
+        // tool error. Return a clean, retryable result instead.
+        if (tool.parameters && Array.isArray(tool.parameters.required)) {
+            var missing = [];
+            for (var r = 0; r < tool.parameters.required.length; r++) {
+                var req = tool.parameters.required[r];
+                // `justification` is a rationale the model should provide but
+                // tools do not use it to execute; never block on it.
+                if (req === "justification") continue;
+                var val = args[req];
+                if (val === undefined || val === null
+                        || (typeof val === "string" && val.trim().length === 0)) {
+                    missing.push(req);
+                }
+            }
+            if (missing.length > 0) {
+                var missingMsg = "Tool call blocked: missing required parameter(s): '" +
+                                 missing.join("', '") + "'. Call the tool again with every required parameter.";
+                console.warn("PlasmaLLM: Blocked tool call " + name + ": missing " + missing.join(", "));
+                context.onDone(JSON.stringify({ status: "error", message: missingMsg }), "", 1);
+                return;
+            }
+        }
+
         tool.execute(args, context);
     }
 

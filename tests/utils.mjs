@@ -115,6 +115,13 @@ ok(!U.isUnsupportedTemperatureError("API error 400: Unsupported parameter: 'top_
 ok(!U.isUnsupportedTemperatureError(""), "empty error is not a match");
 ok(!U.isUnsupportedTemperatureError(undefined), "undefined error is not a match");
 
+// isToolCallArgumentParseError: llama.cpp's truncated tool-call 500.
+ok(U.isToolCallArgumentParseError("API error 500: Failed to parse tool call arguments as JSON: missing closing quote"), "llama.cpp truncated tool call");
+ok(U.isToolCallArgumentParseError("failed to parse tool_call arguments"), "underscore spelling");
+ok(!U.isToolCallArgumentParseError("API error 400: tool call id is invalid"), "no parse/json qualifier");
+ok(!U.isToolCallArgumentParseError("API error 500: failed to parse response"), "no tool call reference");
+ok(!U.isToolCallArgumentParseError(""), "empty error is not a truncated tool call");
+
 if (failed > 0) {
     console.error(failed + " test(s) failed");
     process.exit(1);

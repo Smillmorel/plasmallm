@@ -69,6 +69,18 @@ function isUnsupportedTemperatureError(text) {
     return /unsupported|not supported|does not support|doesn't support|no longer supported|deprecated|not allowed|not permitted|unrecognized|unknown parameter|invalid parameter/.test(s);
 }
 
+// llama.cpp/llama-swap answers HTTP 500 when a model's tool-call arguments are
+// cut off mid-JSON, e.g. "Failed to parse tool call arguments as JSON:
+// [json.exception.parse_error.101] ... missing closing quote". Treat it as a
+// truncated generation (retryable with a larger output budget), not as a
+// transport failure. Requires both a tool-call reference and a JSON/parse
+// qualifier so unrelated errors do not match.
+function isToolCallArgumentParseError(text) {
+    var s = String(text || "").toLowerCase();
+    if (s.indexOf("tool call") === -1 && s.indexOf("tool_call") === -1) return false;
+    return s.indexOf("parse") !== -1 || s.indexOf("json") !== -1;
+}
+
 // Chat history placement: "sidebar" or "button". "auto" picks the sidebar
 // when the view fits both a minimum-width sidebar and a minimum-width chat;
 // unknown modes keep the header button.
