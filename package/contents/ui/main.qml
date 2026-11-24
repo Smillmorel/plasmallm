@@ -2986,7 +2986,9 @@ PlasmoidItem {
                         // Standard attachment loading
                         var list = root.pendingAttachments.slice();
                         if (info.isImage) {
-                            var mime = Api.mimeForImage(info.filePath);
+                            // Mime must describe the encoded bytes: the downscale
+                            // branch writes PNG regardless of the original type.
+                            var mime = Api.mimeForImage(info.encodedPath || info.filePath);
                             var base64Data = stdout.trim();
                             if (base64Data) {
                                 list.push({ filePath: info.filePath, fileName: info.fileName, dataUrl: "data:" + mime + ";base64," + base64Data });
@@ -3042,9 +3044,13 @@ PlasmoidItem {
                     rotator.grabToImage(function(result) {
                         result.saveToFile(tempPath);
                         rotator.destroy(); // Cleanup dynamic object
-                        
+
                         var cmd = "base64 -w0 '" + tempPath + "' && rm -f '" + tempPath + "'";
-                        pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: true };
+                        // encodedPath: grabToImage always writes PNG (per the
+                        // .png temp extension), so the mime must come from it —
+                        // not from the original file, which may be JPEG/WEBP.
+                        // Anthropic rejects mismatched media types outright.
+                        pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: true, encodedPath: tempPath };
                         fileReader.connectSource(cmd);
                     }, targetSize);
                 } else if (rotator.status === Image.Error) {
