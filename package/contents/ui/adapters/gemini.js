@@ -711,12 +711,17 @@ function sendStreaming(opts) {
         }
     };
 
+    var generationConfig = {
+        maxOutputTokens: maxTokens
+    };
+    // Omitted when the caller strips it (providers that reject temperature on
+    // some models — see adapters/temperatureFallback.js).
+    if (typeof temperature === "number") {
+        generationConfig.temperature = temperature / 100.0;
+    }
     var body = {
         contents: translated.contents,
-        generationConfig: {
-            temperature: temperature / 100.0,
-            maxOutputTokens: maxTokens
-        }
+        generationConfig: generationConfig
     };
     // AI Studio lite rejects thinkingBudget:0; Vertex 2.5 rejects thinkingLevel.
     // Helper picks a platform-safe config (never both fields).

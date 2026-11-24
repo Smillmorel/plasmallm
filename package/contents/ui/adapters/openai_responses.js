@@ -671,7 +671,7 @@ function sendStreaming(opts) {
     if (reasoningOn) {
         body.reasoning = { effort: opts.reasoningEffort, summary: "auto" };
     }
-    if (typeof temperature === "number") {
+    if (typeof temperature === "number" && !opts.skipTemperature) {
         // Reasoning models reject any temperature other than 1 (Anthropic via
         // Poe is strict about this; OpenAI o-series silently ignores). Force
         // temperature to 1 whenever reasoning is on.

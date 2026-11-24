@@ -55,6 +55,20 @@ function applyOpenRouterAttribution(xhr, opts, endpoint) {
     }
 }
 
+// Some provider/model combinations reject the `temperature` request field
+// outright (OpenAI GPT-5/6 reasoning models: "Unsupported parameter:
+// 'temperature' is not supported with this model"; Anthropic Claude Haiku
+// 5.x: "temperature is deprecated for this model"). The request fails with
+// 400 before any output, so callers can retry without the field. Match only
+// "temperature" plus an unsupported/deprecated qualifier so plain validation
+// errors ("temperature must be between 0 and 2") are not treated as a
+// capability signal.
+function isUnsupportedTemperatureError(text) {
+    var s = String(text || "").toLowerCase();
+    if (s.indexOf("temperature") === -1) return false;
+    return /unsupported|not supported|does not support|doesn't support|no longer supported|deprecated|not allowed|not permitted|unrecognized|unknown parameter|invalid parameter/.test(s);
+}
+
 // Chat history placement: "sidebar" or "button". "auto" picks the sidebar
 // when the view fits both a minimum-width sidebar and a minimum-width chat;
 // unknown modes keep the header button.

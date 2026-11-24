@@ -584,14 +584,19 @@ function sendStreaming(opts) {
     };
 
     var translated = translateMessages(messages);
+    var generationConfig = {
+        max_output_tokens: opts.maxTokens
+    };
+    // Omitted when the caller strips it (providers that reject temperature on
+    // some models — see adapters/temperatureFallback.js).
+    if (typeof opts.temperature === "number") {
+        generationConfig.temperature = opts.temperature / 100.0;
+    }
     var body = {
         model: model,
         stream: true,
         store: true,
-        generation_config: {
-            temperature: opts.temperature / 100.0,
-            max_output_tokens: opts.maxTokens
-        }
+        generation_config: generationConfig
     };
 
     if (opts.reasoningEffort && opts.reasoningEffort !== "off") {

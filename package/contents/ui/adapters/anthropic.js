@@ -512,16 +512,20 @@ function sendStreaming(opts) {
         model: model,
         max_tokens: maxTokens,
         messages: translated.messages,
-        temperature: temperature / 100.0,
         stream: true
     };
+    // Omitted when the caller strips it (providers that reject temperature on
+    // some models — see adapters/temperatureFallback.js).
+    if (typeof temperature === "number") {
+        body.temperature = temperature / 100.0;
+    }
     // Extended thinking. Requires temperature=1 and max_tokens > budget_tokens,
     // so override both. The user's configured maxTokens still bounds the
     // visible reply (we add the budget on top).
     if (opts.reasoningEffort && opts.reasoningEffort !== "off"
             && opts.thinkingBudget && opts.thinkingBudget > 0) {
         body.thinking = { type: "enabled", budget_tokens: opts.thinkingBudget };
-        body.temperature = 1;
+        if (!opts.skipTemperature) body.temperature = 1;
         body.max_tokens = maxTokens + opts.thinkingBudget;
     } else if (opts.opencodeAuth) {
         // Claude defaults to no thinking when the field is omitted. Qwen and

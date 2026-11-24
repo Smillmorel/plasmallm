@@ -483,10 +483,14 @@ function sendStreaming(opts) {
     var body = {
         model: model,
         messages: translatedMessages,
-        temperature: temperature / 100.0,
         max_tokens: maxTokens,
         stream: true
     };
+    // Omitted when the caller strips it (providers that reject temperature on
+    // some models — see adapters/temperatureFallback.js).
+    if (typeof temperature === "number") {
+        body.temperature = temperature / 100.0;
+    }
     if (opts.reasoningEffort && opts.reasoningEffort !== "off") {
         body.reasoning_effort = opts.reasoningEffort;
     }

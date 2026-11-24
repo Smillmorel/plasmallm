@@ -106,6 +106,15 @@ ok(U.historyDayGroup(at(new Date(2026, 9, 9, 23, 59)), noon) === "older", "seven
 ok(U.historyDayGroup(at(new Date(2026, 9, 1, 12, 0)), new Date(2026, 9, 2, 0, 30)) === "yesterday", "across a month boundary");
 ok(U.historyDayGroup(0, noon) === "older", "unknown mtime is older");
 
+// isUnsupportedTemperatureError: only capability rejections, not validation.
+ok(U.isUnsupportedTemperatureError("Unsupported parameter: 'temperature' is not supported with this model."), "OpenAI-style unsupported temperature");
+ok(U.isUnsupportedTemperatureError("Upstream request failed: [invalid_request_error] `temperature` is deprecated for this model."), "Anthropic-style deprecated temperature");
+ok(U.isUnsupportedTemperatureError("Unknown parameter: temperature"), "unknown parameter names temperature");
+ok(!U.isUnsupportedTemperatureError("temperature must be between 0 and 2"), "range validation is not a capability signal");
+ok(!U.isUnsupportedTemperatureError("API error 400: Unsupported parameter: 'top_p'"), "other unsupported parameters are ignored");
+ok(!U.isUnsupportedTemperatureError(""), "empty error is not a match");
+ok(!U.isUnsupportedTemperatureError(undefined), "undefined error is not a match");
+
 if (failed > 0) {
     console.error(failed + " test(s) failed");
     process.exit(1);
