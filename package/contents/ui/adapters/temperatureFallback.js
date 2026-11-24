@@ -80,17 +80,6 @@ function send(adapter, opts) {
         return o;
     }
 
-    function start(withoutTemperature) {
-        state.attempt = adapter.sendStreaming(buildOpts(withoutTemperature));
-        handle.xhr = state.attempt ? state.attempt.xhr : null;
-        if (state.timer && state.attempt && typeof state.attempt.setPollTimer === "function")
-            state.attempt.setPollTimer(state.timer);
-        // The first attempt stopped the shared poll timer in its error path;
-        // restart it for the retry so streamed text keeps updating.
-        if (withoutTemperature && state.timer)
-            state.timer.start();
-    }
-
     var handle = {
         xhr: null,
         setPollTimer: function(timer) {
@@ -109,6 +98,17 @@ function send(adapter, opts) {
             else if (typeof state.attempt.abort === "function") state.attempt.abort();
         }
     };
+
+    function start(withoutTemperature) {
+        state.attempt = adapter.sendStreaming(buildOpts(withoutTemperature));
+        handle.xhr = state.attempt ? state.attempt.xhr : null;
+        if (state.timer && state.attempt && typeof state.attempt.setPollTimer === "function")
+            state.attempt.setPollTimer(state.timer);
+        // The first attempt stopped the shared poll timer in its error path;
+        // restart it for the retry so streamed text keeps updating.
+        if (withoutTemperature && state.timer)
+            state.timer.start();
+    }
 
     start(false);
     return handle;
