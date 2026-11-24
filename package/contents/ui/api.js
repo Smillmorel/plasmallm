@@ -39,6 +39,68 @@ function _tr(options, str) {
     return res;
 }
 
+// Server-agent endpoints (Hermes-style gateways) run their own agent loop and
+// execute tools on the server. They accept a request's `tools` array but never
+// use it, so advertising ours only puts instructions in the prompt for tools
+// the model cannot call. Endpoints that expose GET /capabilities with
+// runtime.mode == "server_agent" opt out; the answer is cached per endpoint and
+// learned lazily (the first request on a fresh endpoint still advertises).
+var _serverAgentCache = {};
+var _serverAgentProbes = {};
+
+function _serverAgentKey(apiType, endpoint, providerName) {
+    return String(apiType || "") + "|" + String(providerName || "") + "|" + String(endpoint || "");
+}
+
+/** True once GET /capabilities identified this endpoint as a server-side agent. */
+function isServerAgentEndpoint(apiType, endpoint, providerName) {
+    return _serverAgentCache[_serverAgentKey(apiType, endpoint, providerName)] === true;
+}
+
+/** Pure parse of a /capabilities payload; exported for tests. */
+function parseServerAgentCapabilities(text) {
+    try {
+        var caps = JSON.parse(text);
+        var runtime = caps && caps.runtime;
+        if (!runtime || typeof runtime !== "object") return false;
+        if (runtime.mode === "server_agent") return true;
+        return runtime.tool_execution === "server" && runtime.split_runtime === false;
+    } catch (e) {
+        return false;
+    }
+}
+
+function probeServerAgentEndpoint(apiType, endpoint, apiKey, providerName) {
+    if (!endpoint || typeof endpoint !== "string") return;
+    var key = _serverAgentKey(apiType, endpoint, providerName);
+    if (_serverAgentCache.hasOwnProperty(key) || _serverAgentProbes[key]) return;
+    _serverAgentProbes[key] = true;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", endpoint.replace(/\/+$/, "") + "/capabilities");
+    xhr.timeout = 10000;
+    xhr.setRequestHeader("Content-Type", "application/json");
+    if (apiKey) xhr.setRequestHeader("Authorization", "Bearer " + apiKey);
+
+    var settle = function() {
+        _serverAgentProbes[key] = false;
+    };
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        settle();
+        if (xhr.status === 200) {
+            _serverAgentCache[key] = parseServerAgentCapabilities(xhr.responseText);
+        } else if (xhr.status === 404 || xhr.status === 405) {
+            // A plain completions API, not an agent gateway. Remember that so we
+            // do not probe it on every turn.
+            _serverAgentCache[key] = false;
+        }
+    };
+    xhr.ontimeout = settle;
+    xhr.onerror = settle;
+    xhr.send();
+}
+
 // Default system prompt template. Users may edit this wholesale; any of the
 // {{placeholder}} tags below can be moved, duplicated, or removed.
 var DEFAULT_SYSTEM_PROMPT_TEMPLATE = "You are a helpful assistant embedded in the user's Linux desktop.\n" +
@@ -153,9 +215,13 @@ function buildSystemPrompt(sysInfo, template, options) {
     var approvalText = buildApprovalModeSection(options);
     var ttsText = buildTtsSection(options);
     var trFn = (options && typeof options.i18n === "function") ? options.i18n : (typeof i18n === "function" ? i18n : null);
-    var toolsText = options.toolsConfig ? ToolManager.buildSystemPromptSection(options.toolsConfig, trFn) : "";
+    // A server-agent endpoint never registers the tools we would advertise, so
+    // the tool/skill/memory-tool sections would describe capabilities the model
+    // cannot call. Keep the user's memories, drop the tool instructions.
+    var advertiseTools = options.serverAgentEndpoint !== true;
+    var toolsText = (advertiseTools && options.toolsConfig) ? ToolManager.buildSystemPromptSection(options.toolsConfig, trFn) : "";
     var skillsText = "";
-    if (options.toolsConfig && options.toolsConfig.skillsEnabled) {
+    if (advertiseTools && options.toolsConfig && options.toolsConfig.skillsEnabled) {
         skillsText = Skills.buildSystemPromptSection(
             options.toolsConfig.loadedSkills || [],
             options.toolsConfig.skillsDisabledList,
@@ -164,7 +230,7 @@ function buildSystemPrompt(sysInfo, template, options) {
     }
     var memoryText = "";
     if (options.toolsConfig) {
-        memoryText = Memory.renderSection(options.toolsConfig.memoryPhrases);
+        memoryText = Memory.renderSection(options.toolsConfig.memoryPhrases, advertiseTools);
     }
 
     var vars = {
@@ -372,6 +438,10 @@ function fetchModels(apiType, endpoint, apiKey, usesResponsesAPI, opts, callback
         opts = null;
     }
 
+    // Capability detection belongs with the model list: same endpoint, same
+    // credentials, once per session. Chat turns then only read the cache.
+    probeServerAgentEndpoint(apiType, endpoint, apiKey, opts && opts.providerName);
+
     var ad = Adapters.getAdapter(apiType);
     // openai's fetchModels takes the extra flag; other adapters ignore it.
     if (apiType === "openai") {
@@ -383,6 +453,11 @@ function fetchModels(apiType, endpoint, apiKey, usesResponsesAPI, opts, callback
 function buildTools(apiType, options) {
     if (options) {
         options.searchConfigured = isSearchConfigured(options);
+        if (isServerAgentEndpoint(apiType, options.endpoint, options.providerName)) {
+            // The endpoint runs its own tool loop; our schemas would be ignored.
+            // The capability comes from fetchModels(), never probed here.
+            return [];
+        }
     }
     return Adapters.getAdapter(apiType).buildTools(options);
 }
@@ -746,6 +821,16 @@ function replaceLatexSymbols(text) {
         return "__ESCAPED_" + p1.charCodeAt(0) + "__";
     });
 
+    // Mask fenced blocks and inline code spans before looking for math: a `$`
+    // inside a shell snippet is literal text, not a formula delimiter.
+    var codeSpans = [];
+    function maskCode(match) {
+        codeSpans.push(match);
+        return "\u0000PLMCODE" + (codeSpans.length - 1) + "\u0000";
+    }
+    text = text.replace(/(```|~~~)[\s\S]*?\1/g, maskCode);
+    text = text.replace(/`[^`\n]*`/g, maskCode);
+
     // Parse block math: $$ formula $$ or \[ formula \]
     var blockRegex1 = /\$\$([\s\S]*?)\$\$/g;
     text = text.replace(blockRegex1, function(match, p1) {
@@ -766,7 +851,7 @@ function replaceLatexSymbols(text) {
     });
 
     // Parse inline math: $ formula $ or \( formula \)
-    var inlineRegex1 = /\$([^\s\$](?:[^\$]*?[^\s\$])?)\$/g;
+    var inlineRegex1 = /\$([^\s\$\n](?:[^\$\n]*?[^\s\$\n])?)\$/g;
     text = text.replace(inlineRegex1, function(match, p1) {
         if (p1.indexOf("\\frac") !== -1 || p1.indexOf("\\sqrt") !== -1) {
             var box = parseLatexToBox(p1);
@@ -784,7 +869,10 @@ function replaceLatexSymbols(text) {
         return " `" + replaceSymbolsInFormulaFlat(p1) + "` ";
     });
 
-    // Restore escaped characters
+    // Restore code spans untouched, then escaped characters.
+    text = text.replace(/\u0000PLMCODE(\d+)\u0000/g, function(match, p1) {
+        return codeSpans[parseInt(p1, 10)];
+    });
     text = text.replace(/__ESCAPED_DOLLAR__/g, "$");
     text = text.replace(/__ESCAPED_(\d+)__/g, function(match, p1) {
         return String.fromCharCode(parseInt(p1, 10));
