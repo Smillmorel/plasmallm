@@ -1762,6 +1762,16 @@ PlasmaExtras.Representation {
                 onClicked: attachDialog.open()
             }
 
+            PlasmaComponents.ToolButton {
+                icon.name: "camera-photo"
+                visible: true
+                enabled: !root.isLoading && root.systemPromptReady
+                PlasmaComponents.ToolTip.text: i18n("Screenshot this monitor")
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                PlasmaComponents.ToolTip.visible: hovered && PlasmaComponents.ToolTip.text !== ""
+                onClicked: root.captureMonitorScreenshot()
+            }
+
             // Microphone: hold / toggle / auto (click toggle, hold ≥250ms = PTT).
             PlasmaComponents.ToolButton {
                 id: micButton

@@ -81,6 +81,16 @@ function isToolCallArgumentParseError(text) {
     return s.indexOf("parse") !== -1 || s.indexOf("json") !== -1;
 }
 
+// Spectacle one-shot for "screenshot this monitor". Hides nothing itself;
+// the caller collapses the popup first and relies on the sleep so the
+// compositor unmaps it before Spectacle captures the current monitor.
+function monitorScreenshotCommand(dir, file) {
+    function q(s) {
+        return "'" + String(s).replace(/'/g, "'\\''") + "'";
+    }
+    return "mkdir -p " + q(dir) + " && sleep 0.4 && spectacle -m -b -n -o " + q(file);
+}
+
 // Chat history placement: "sidebar" or "button". "auto" picks the sidebar
 // when the view fits both a minimum-width sidebar and a minimum-width chat;
 // unknown modes keep the header button.

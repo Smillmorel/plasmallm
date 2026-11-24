@@ -122,6 +122,10 @@ ok(!U.isToolCallArgumentParseError("API error 400: tool call id is invalid"), "n
 ok(!U.isToolCallArgumentParseError("API error 500: failed to parse response"), "no tool call reference");
 ok(!U.isToolCallArgumentParseError(""), "empty error is not a truncated tool call");
 
+// monitorScreenshotCommand: one Spectacle invocation for the current monitor.
+ok(U.monitorScreenshotCommand("/home/u/.local/share/plasmallm/attachments", "/home/u/.local/share/plasmallm/attachments/screenshot_monitor_abc.jpg") === "mkdir -p '/home/u/.local/share/plasmallm/attachments' && sleep 0.4 && spectacle -m -b -n -o '/home/u/.local/share/plasmallm/attachments/screenshot_monitor_abc.jpg'", "exact spectacle command");
+ok(U.monitorScreenshotCommand("/tmp/a'b", "/tmp/a'b/x.jpg") === "mkdir -p '/tmp/a'\\''b' && sleep 0.4 && spectacle -m -b -n -o '/tmp/a'\\''b/x.jpg'", "single quotes escaped");
+
 if (failed > 0) {
     console.error(failed + " test(s) failed");
     process.exit(1);

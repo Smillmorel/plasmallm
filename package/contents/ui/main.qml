@@ -1809,6 +1809,17 @@ PlasmoidItem {
                     isChunkSaving = false;
                     pumpChunkSaveQueue();
                 }
+            } else if (pendingScreenshotCommands[source] !== undefined) {
+                var shot = pendingScreenshotCommands[source];
+                if (exitCode === undefined) return; // wait for process exit
+                delete pendingScreenshotCommands[source];
+                disconnectSource(source);
+                if (shot.restoreExpanded) root.expanded = true;
+                if (exitCode === 0) {
+                    attachFile(shot.filePath);
+                } else {
+                    root.appendDisplayMessage("error", i18n("Screenshot failed (exit %1). Is Spectacle installed?", exitCode), { shared: false });
+                }
             } else if (historyFetchCommands.indexOf(source) !== -1) {
                 historyFetchCommands.splice(historyFetchCommands.indexOf(source), 1);
                 if (source === lastHistoryFetchSource) {
@@ -2937,6 +2948,7 @@ PlasmoidItem {
     }
     property var pendingAttachments: []
     property var pendingFileReads: ({}) // command -> {filePath, fileName, isImage}
+    property var pendingScreenshotCommands: ({}) // command -> {filePath, restoreExpanded}
 
     P5Support.DataSource {
         id: fileReader
@@ -3052,6 +3064,24 @@ PlasmoidItem {
             pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: isImage };
             fileReader.connectSource(cmd);
         }
+    }
+
+    // Screenshot of the current monitor via Spectacle. Collapses the popup
+    // first so it is not in its own screenshot; the command's sleep lets the
+    // compositor unmap it before capture. The finished file goes through the
+    // normal attachment pipeline (downscale + dataUrl), landing in the
+    // persistent attachments dir so chat-history restore keeps working.
+    function captureMonitorScreenshot() {
+        var tempId = Math.random().toString(36).substring(2, 10);
+        var dataHome = sysInfo.xdgDataHome || (sysInfo.userHome ? (sysInfo.userHome + "/.local/share") : "/home/" + (sysInfo.user || "user") + "/.local/share");
+        var attachDir = dataHome + "/plasmallm/attachments";
+        var shotPath = attachDir + "/screenshot_monitor_" + tempId + ".jpg";
+        var wasExpanded = root.expanded;
+        root.expanded = false;
+        var cmd = Utils.monitorScreenshotCommand(attachDir, shotPath);
+        pendingScreenshotCommands[cmd] = { filePath: shotPath, restoreExpanded: wasExpanded };
+        executable.connectSource(cmd);
+        return true;
     }
 
     function pasteImageFromClipboard() {
