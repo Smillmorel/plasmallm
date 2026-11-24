@@ -122,6 +122,21 @@ ok(!U.isToolCallArgumentParseError("API error 400: tool call id is invalid"), "n
 ok(!U.isToolCallArgumentParseError("API error 500: failed to parse response"), "no tool call reference");
 ok(!U.isToolCallArgumentParseError(""), "empty error is not a truncated tool call");
 
+// fitWithin: proportional downscale, null when already inside.
+ok(U.fitWithin(3200, 1800, 1600, 1600) !== null, "oversize returns a fit");
+var fit = U.fitWithin(3200, 1800, 1600, 1600);
+ok(fit.width === 1600 && fit.height === 900, "3200x1800 caps at 1600x900, ratio kept: " + JSON.stringify(fit));
+var fitP = U.fitWithin(1080, 1920, 1600, 1600);
+ok(fitP.width === 900 && fitP.height === 1600, "portrait caps long edge: " + JSON.stringify(fitP));
+ok(U.fitWithin(1024, 576, 1600, 1600) === null, "small image untouched");
+ok(U.fitWithin(1600, 900, 1600, 1600) === null, "exact fit untouched");
+var fitBox = U.fitWithin(3200, 1800, 600, 800);
+ok(fitBox.width === 600 && fitBox.height === 338, "legacy 600x800 box stays proportional: " + JSON.stringify(fitBox));
+ok(U.fitWithin(0, 100, 600, 800) === null, "zero width is null");
+ok(U.fitWithin(100, 100, 0, 800) === null, "zero cap is null");
+var fitTiny = U.fitWithin(10000, 10, 1600, 1600);
+ok(fitTiny.width === 1600 && fitTiny.height === 2, "extreme panorama keeps ratio: " + JSON.stringify(fitTiny));
+
 // monitorScreenshotCommand: one Spectacle invocation for the current monitor.
 ok(U.monitorScreenshotCommand("/home/u/.local/share/plasmallm/attachments", "/home/u/.local/share/plasmallm/attachments/screenshot_monitor_abc.jpg") === "mkdir -p '/home/u/.local/share/plasmallm/attachments' && sleep 0.4 && spectacle -m -b -n -o '/home/u/.local/share/plasmallm/attachments/screenshot_monitor_abc.jpg'", "exact spectacle command");
 ok(U.monitorScreenshotCommand("/tmp/a'b", "/tmp/a'b/x.jpg") === "mkdir -p '/tmp/a'\\''b' && sleep 0.4 && spectacle -m -b -n -o '/tmp/a'\\''b/x.jpg'", "single quotes escaped");

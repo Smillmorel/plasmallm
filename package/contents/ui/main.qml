@@ -1816,7 +1816,7 @@ PlasmoidItem {
                 disconnectSource(source);
                 if (shot.restoreExpanded) root.expanded = true;
                 if (exitCode === 0) {
-                    attachFile(shot.filePath);
+                    attachFile(shot.filePath, { maxWidth: 1600, maxHeight: 1600, force: true });
                 } else {
                     root.appendDisplayMessage("error", i18n("Screenshot failed (exit %1). Is Spectacle installed?", exitCode), { shared: false });
                 }
@@ -3016,7 +3016,7 @@ PlasmoidItem {
         }
     }
 
-    function attachFile(filePath) {
+    function attachFile(filePath, opts) {
         var fileName = filePath.split("/").pop();
         var isImage = Api.isImageFile(filePath);
 
@@ -3030,15 +3030,23 @@ PlasmoidItem {
             var handler = function() {
                 if (rotator.status === Image.Ready) {
                     rotator.statusChanged.disconnect(handler);
-                    
+
                     var w = rotator.implicitWidth > 0 ? rotator.implicitWidth : rotator.sourceSize.width;
                     var h = rotator.implicitHeight > 0 ? rotator.implicitHeight : rotator.sourceSize.height;
+                    // Explicit item size: grabToImage scales from the item's
+                    // own size, and an unsized item scales from 0x0.
+                    rotator.width = w;
+                    rotator.height = h;
+                    // Screenshots always cap the long edge (a full-res monitor
+                    // shot kills CPU vision encoders); other attachments honor
+                    // the resize toggle, defaulting to the historical 600x800.
+                    var boxW = (opts && opts.maxWidth) || 600;
+                    var boxH = (opts && opts.maxHeight) || 800;
+                    var force = !!(opts && opts.force);
                     var targetSize = undefined;
-                    if (Plasmoid.configuration.resizeImageAttachments && (w > 600 || h > 800)) {
-                        var scale = Math.min(600 / w, 800 / h);
-                        var tw = Math.round(w * scale);
-                        var th = Math.round(h * scale);
-                        targetSize = Qt.size(tw, th);
+                    if (force || Plasmoid.configuration.resizeImageAttachments) {
+                        var fit = Utils.fitWithin(w, h, boxW, boxH);
+                        if (fit) targetSize = Qt.size(fit.width, fit.height);
                     }
 
                     rotator.grabToImage(function(result) {
@@ -3074,9 +3082,9 @@ PlasmoidItem {
 
     // Screenshot of the current monitor via Spectacle. Collapses the popup
     // first so it is not in its own screenshot; the command's sleep lets the
-    // compositor unmap it before capture. The finished file goes through the
-    // normal attachment pipeline (downscale + dataUrl), landing in the
-    // persistent attachments dir so chat-history restore keeps working.
+    // compositor unmap it before capture. Always capped at a 1600px long edge:
+    // local CPU vision encoders fall off a cliff above ~2048px (measured:
+    // 1600px wide encodes in seconds, 3200x1800 never finishes).
     function captureMonitorScreenshot() {
         var tempId = Math.random().toString(36).substring(2, 10);
         var dataHome = sysInfo.xdgDataHome || (sysInfo.userHome ? (sysInfo.userHome + "/.local/share") : "/home/" + (sysInfo.user || "user") + "/.local/share");

@@ -81,6 +81,20 @@ function isToolCallArgumentParseError(text) {
     return s.indexOf("parse") !== -1 || s.indexOf("json") !== -1;
 }
 
+// Proportional fit of (w,h) inside a (maxW,maxH) box. Returns
+// {width,height} when scaling is needed, null when the image already fits.
+// Single uniform scale factor, so the aspect ratio is always preserved.
+function fitWithin(w, h, maxW, maxH) {
+    w = Math.floor(Number(w) || 0);
+    h = Math.floor(Number(h) || 0);
+    maxW = Math.floor(Number(maxW) || 0);
+    maxH = Math.floor(Number(maxH) || 0);
+    if (w <= 0 || h <= 0 || maxW <= 0 || maxH <= 0) return null;
+    if (w <= maxW && h <= maxH) return null;
+    var scale = Math.min(maxW / w, maxH / h);
+    return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) };
+}
+
 // Spectacle one-shot for "screenshot this monitor". Hides nothing itself;
 // the caller collapses the popup first and relies on the sleep so the
 // compositor unmaps it before Spectacle captures the current monitor.
