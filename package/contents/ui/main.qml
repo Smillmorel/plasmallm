@@ -1809,6 +1809,17 @@ PlasmoidItem {
                     isChunkSaving = false;
                     pumpChunkSaveQueue();
                 }
+            } else if (pendingScreenshotCommands[source] !== undefined) {
+                var shot = pendingScreenshotCommands[source];
+                if (exitCode === undefined) return; // wait for process exit
+                delete pendingScreenshotCommands[source];
+                disconnectSource(source);
+                if (shot.restoreExpanded) root.expanded = true;
+                if (exitCode === 0) {
+                    attachFile(shot.filePath, { maxWidth: 1600, maxHeight: 1600, force: true });
+                } else {
+                    root.appendDisplayMessage("error", i18n("Screenshot failed (exit %1). Is Spectacle installed?", exitCode), { shared: false });
+                }
             } else if (historyFetchCommands.indexOf(source) !== -1) {
                 historyFetchCommands.splice(historyFetchCommands.indexOf(source), 1);
                 if (source === lastHistoryFetchSource) {
@@ -2937,6 +2948,7 @@ PlasmoidItem {
     }
     property var pendingAttachments: []
     property var pendingFileReads: ({}) // command -> {filePath, fileName, isImage}
+    property var pendingScreenshotCommands: ({}) // command -> {filePath, restoreExpanded}
 
     P5Support.DataSource {
         id: fileReader
@@ -2974,7 +2986,9 @@ PlasmoidItem {
                         // Standard attachment loading
                         var list = root.pendingAttachments.slice();
                         if (info.isImage) {
-                            var mime = Api.mimeForImage(info.filePath);
+                            // Mime must describe the encoded bytes: the downscale
+                            // branch writes PNG regardless of the original type.
+                            var mime = Api.mimeForImage(info.encodedPath || info.filePath);
                             var base64Data = stdout.trim();
                             if (base64Data) {
                                 list.push({ filePath: info.filePath, fileName: info.fileName, dataUrl: "data:" + mime + ";base64," + base64Data });
@@ -3002,7 +3016,7 @@ PlasmoidItem {
         }
     }
 
-    function attachFile(filePath) {
+    function attachFile(filePath, opts) {
         var fileName = filePath.split("/").pop();
         var isImage = Api.isImageFile(filePath);
 
@@ -3016,23 +3030,35 @@ PlasmoidItem {
             var handler = function() {
                 if (rotator.status === Image.Ready) {
                     rotator.statusChanged.disconnect(handler);
-                    
+
                     var w = rotator.implicitWidth > 0 ? rotator.implicitWidth : rotator.sourceSize.width;
                     var h = rotator.implicitHeight > 0 ? rotator.implicitHeight : rotator.sourceSize.height;
+                    // Explicit item size: grabToImage scales from the item's
+                    // own size, and an unsized item scales from 0x0.
+                    rotator.width = w;
+                    rotator.height = h;
+                    // Screenshots always cap the long edge (a full-res monitor
+                    // shot kills CPU vision encoders); other attachments honor
+                    // the resize toggle, defaulting to the historical 600x800.
+                    var boxW = (opts && opts.maxWidth) || 600;
+                    var boxH = (opts && opts.maxHeight) || 800;
+                    var force = !!(opts && opts.force);
                     var targetSize = undefined;
-                    if (Plasmoid.configuration.resizeImageAttachments && (w > 600 || h > 800)) {
-                        var scale = Math.min(600 / w, 800 / h);
-                        var tw = Math.round(w * scale);
-                        var th = Math.round(h * scale);
-                        targetSize = Qt.size(tw, th);
+                    if (force || Plasmoid.configuration.resizeImageAttachments) {
+                        var fit = Utils.fitWithin(w, h, boxW, boxH);
+                        if (fit) targetSize = Qt.size(fit.width, fit.height);
                     }
 
                     rotator.grabToImage(function(result) {
                         result.saveToFile(tempPath);
                         rotator.destroy(); // Cleanup dynamic object
-                        
+
                         var cmd = "base64 -w0 '" + tempPath + "' && rm -f '" + tempPath + "'";
-                        pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: true };
+                        // encodedPath: grabToImage always writes PNG (per the
+                        // .png temp extension), so the mime must come from it —
+                        // not from the original file, which may be JPEG/WEBP.
+                        // Anthropic rejects mismatched media types outright.
+                        pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: true, encodedPath: tempPath };
                         fileReader.connectSource(cmd);
                     }, targetSize);
                 } else if (rotator.status === Image.Error) {
@@ -3052,6 +3078,24 @@ PlasmoidItem {
             pendingFileReads[cmd] = { filePath: filePath, fileName: fileName, isImage: isImage };
             fileReader.connectSource(cmd);
         }
+    }
+
+    // Screenshot of the current monitor via Spectacle. Collapses the popup
+    // first so it is not in its own screenshot; the command's sleep lets the
+    // compositor unmap it before capture. Always capped at a 1600px long edge:
+    // local CPU vision encoders fall off a cliff above ~2048px (measured:
+    // 1600px wide encodes in seconds, 3200x1800 never finishes).
+    function captureMonitorScreenshot() {
+        var tempId = Math.random().toString(36).substring(2, 10);
+        var dataHome = sysInfo.xdgDataHome || (sysInfo.userHome ? (sysInfo.userHome + "/.local/share") : "/home/" + (sysInfo.user || "user") + "/.local/share");
+        var attachDir = dataHome + "/plasmallm/attachments";
+        var shotPath = attachDir + "/screenshot_monitor_" + tempId + ".jpg";
+        var wasExpanded = root.expanded;
+        root.expanded = false;
+        var cmd = Utils.monitorScreenshotCommand(attachDir, shotPath);
+        pendingScreenshotCommands[cmd] = { filePath: shotPath, restoreExpanded: wasExpanded };
+        executable.connectSource(cmd);
+        return true;
     }
 
     function pasteImageFromClipboard() {
